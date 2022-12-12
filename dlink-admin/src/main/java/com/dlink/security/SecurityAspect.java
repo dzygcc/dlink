@@ -19,8 +19,11 @@
 
 package com.dlink.security;
 
+import com.dlink.assertion.Asserts;
 import com.dlink.common.result.ProTableResult;
 import com.dlink.common.result.Result;
+import com.dlink.constant.CommonConstant;
+import com.dlink.model.DataBase;
 import com.dlink.model.History;
 import com.dlink.model.JobInfoDetail;
 import com.dlink.result.ExplainResult;
@@ -30,15 +33,18 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.dlink.service.DataBaseService;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.annotation.AfterReturning;
 import org.aspectj.lang.annotation.Aspect;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
 @Aspect
 @Component
 public class SecurityAspect {
+
 
     // 敏感信息的pattern :
     //  'password' = 'wwz@test'
@@ -81,16 +87,30 @@ public class SecurityAspect {
             }
         }
 
-        // mask statement for histories
+        // ProTableResult<?>
         if (returnValue instanceof ProTableResult<?> && ((ProTableResult<?>) returnValue).getData() instanceof List<?>) {
             List<?> list = ((ProTableResult<?>) returnValue).getData();
-            if (CollectionUtils.isEmpty(list) || !(list.get(0) instanceof History)) {
+            if (CollectionUtils.isEmpty(list)) {
                 return;
             }
-            for (Object obj : list) {
-                History history = (History) obj;
-                String statement = history.getStatement();
-                history.setStatement(mask(statement, SENSITIVE, MASK));
+
+            // mask statement for histories
+            if (list.get(0) instanceof History) {
+                for (Object obj : list) {
+                    History history = (History) obj;
+                    String statement = history.getStatement();
+                    history.setStatement(mask(statement, SENSITIVE, MASK));
+                }
+            }
+
+            // /api/database/listDataBases
+            if (list.get(0) instanceof DataBase) {
+                for (Object obj : list) {
+                    DataBase db = (DataBase) obj;
+
+                    // 隐藏密码
+                    maskDB(db);
+                }
             }
         }
 
@@ -112,6 +132,36 @@ public class SecurityAspect {
                 history.setStatement(mask(statement, SENSITIVE, MASK));
             }
         }
+
+        // /api/database/getOneById
+        if (returnValue instanceof Result<?> && ((Result<?>) returnValue).getDatas() instanceof DataBase) {
+            DataBase db = ((DataBase) ((Result<?>) returnValue).getDatas());
+
+            maskDB(db);
+        }
+    }
+
+    private void maskDB(DataBase db) {
+        int length = db.getPassword() == null ? 0 : db.getPassword().length();
+
+        // mask 2/3 of password
+        db.setPassword(maskPart(db.getPassword(), 2, 2 * length / 3));
+
+        // mask all
+        db.setFlinkConfig(mask(db.getFlinkConfig(), SENSITIVE, MASK));
+    }
+
+    public static String maskPart(String info, int from, int end) {
+        if (null == info || from <= 0 || end < from || end > info.length()) {
+            return info;
+        }
+
+        StringBuilder ret = new StringBuilder(info);
+        for (int i = from; i < end; i++) {
+            ret.setCharAt(i, '*');
+        }
+
+        return ret.toString();
     }
 
     /**
